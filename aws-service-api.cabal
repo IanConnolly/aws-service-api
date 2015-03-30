@@ -1,11 +1,11 @@
 name:                aws-service-api
-version:             0.1.0.0      
+version:             0.1.0.0
 license:             BSD3
 license-file:        LICENSE
 author:              Ian Connolly
-maintainer:          ian@connolly.io          
+maintainer:          ian@connolly.io
 category:            Network
-build-type:          Simple  
+build-type:          Simple
 cabal-version:       >=1.10
 
 library
@@ -19,8 +19,13 @@ library
                        certificate,
                        bytestring,
                        binary,
-                       pem
-                       
+                       pem,
+                       transformers,
+                       conduit,
+                       resourcet,
+                       text,
+                       containers
+
   hs-source-dirs:      src
   default-language:    Haskell2010
   Extensions:          RankNTypes

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Network.AWS.ServiceManagement
   ( CloudService
   , cloudServiceName
@@ -21,7 +22,7 @@ module Network.AWS.ServiceManagement
 
   ) where
 
-import Data.Maybe (listToMaybe)
+import Data.Maybe
 import Control.Applicative ((<$>), (<*>))
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
@@ -35,6 +36,19 @@ import Crypto.Types.PubKey.RSA
 import qualified Data.Certificate.KeyRSA as KeyRSA
 import Network.TLS
 
+import Data.Conduit
+import Control.Monad.Trans.Resource
+import qualified Data.Conduit.List as CL
+import Control.Monad.Trans.Class (lift)
+
+import AWS
+import AWS.EC2
+import AWS.EC2.Types
+import qualified AWS.EC2.Util as Util
+
+import Data.Text hiding (map, filter, concat, head)
+import Data.Map (Map(..), fromListWith, toList)
+
 data HostedService = HostedService {
     hostedServiceName :: String
   }
@@ -42,19 +56,19 @@ data HostedService = HostedService {
 data CloudService = CloudService {
     cloudServiceName :: String
   , cloudServiceVMs  :: [VirtualMachine]
-  }
+  } deriving (Show)
 
 data VirtualMachine = VirtualMachine {
     vmName           :: String
   , vmIpAddress      :: String
   , vmInputEndpoints :: [Endpoint]
-  }
+  } deriving (Show)
 
 data Endpoint = Endpoint {
     endpointName :: String
   , endpointPort :: String
   , endpointVip  :: String
-  }
+  } deriving (Show)
 
 -- | Find the endpoint with name @SSH@.
 vmSshEndpoint :: VirtualMachine -> Maybe Endpoint
@@ -139,7 +153,48 @@ fileReadPrivateKey filepath = do
                                 $ filter ((== "RSA PRIVATE KEY") . pemName) pems
           parseKey (Left err) = error ("Cannot parse PEM file " ++ show err)
 
--- cloudServices :: IO [CloudService]
+cloudServices :: IO [CloudService]
+cloudServices = do
+    ins <- getInstances
+    let services = groupServices ins
+    return $ parseServices services
+
+getInstances :: IO [Instance]
+getInstances = do
+    cred <- loadCredential
+    reservations <- runResourceT $ runEC2 cred $ do
+        setRegion "eu-west-1"
+        Util.list $ describeInstances [] []
+    return $ concat $ map reservationInstanceSet reservations
+
+getTagValue :: String -> Instance -> String
+getTagValue key ins = head $ [unpack . fromJust $ resourceTagValue resTag | resTag <- instanceTagSet ins, unpack (resourceTagKey resTag) == key]
+
+groupServices :: [Instance] -> Map String [VirtualMachine]
+groupServices instances = fromListWith (++) serviceTuplesWithLists
+    where serviceTuplesWithLists = map makeLists serviceTuples
+          makeLists (service, ins) = (service, [ins])
+          serviceTuples = map makeServiceTuple instances
+          makeServiceTuple ins = (getTagValue "service" ins, parseInstance ins)
+
+parseInstance :: Instance -> VirtualMachine
+parseInstance ins = VirtualMachine {
+    vmName = getTagValue "Name" ins
+  , vmIpAddress = show $ fromJust $ instanceIpAddress ins
+  , vmInputEndpoints = [Endpoint {
+        endpointName = "SSH"
+      , endpointVip = show $ fromJust $ instanceIpAddress ins
+      , endpointPort = "22"
+  }]
+ }
+
+parseServices :: Map String [VirtualMachine] -> [CloudService]
+parseServices = map parseTuple . toList
+    where parseTuple (name, vms) = CloudService {
+            cloudServiceName = name
+          , cloudServiceVMs = vms
+ }
+
 {--
 createService :: String -> IO CloudService
 createService tag = do
@@ -152,3 +207,5 @@ addVM cserv = do
 -- shutdownVM :: CloudService -> IO ()
 
 -- createAWSVM :: String -> IO VirtualMachine
+-- createAWSVM name = do
+
