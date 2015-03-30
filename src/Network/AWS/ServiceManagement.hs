@@ -15,7 +15,7 @@ module Network.AWS.ServiceManagement
   , AWSSetup(..)
   , awsSetup
     -- * High-level API
---  , cloudServices
+  , cloudServices
 --  , createService
 --  , addVM
 --  , shutdownVM
