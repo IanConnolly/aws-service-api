@@ -1,4 +1,3 @@
-{-# LANGUAGE Arrows #-}
 module Network.AWS.ServiceManagement
   ( CloudService
   , cloudServiceName
@@ -10,13 +9,16 @@ module Network.AWS.ServiceManagement
   , Endpoint
   , endpointName
   , endpointPort
-  , endpointVi
+  , endpointVip
   , vmSshEndpoint
-    -- * Setup
   , AWSSetup(..)
   , awsSetup
     -- * High-level API
-  , cloudServices
+--  , cloudServices
+--  , createService
+--  , addVM
+--  , shutdownVM
+
   ) where
 
 
@@ -26,20 +28,19 @@ import Control.Arrow (arr)
 import Control.Monad (forM)
 import Data.Maybe (listToMaybe)
 import Control.Applicative ((<$>), (<*>))
-import Data.ByteString.Lazy (ByteString)
-import Data.ByteString.Char8 as BSC (pack)
-import Data.ByteString.Lazy.Char8 as BSLC (unpack)
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
 import Data.Binary (Binary(get, put))
 import Data.Binary.Put (runPut)
 import Data.Binary.Get (Get, runGet)
-import Network.TLS (PrivateKey(PrivRSA))
-import Network.TLS.Extra (fileReadCertificate, fileReadPrivateKey)
-import Data.Certificate.X509 (X509, encodeCertificate, decodeCertificate)
-import qualified Crypto.Types.PubKey.RSA as RSA (PrivateKey(..))
-import Control.Monad.Trans.Resource (ResourceT)
-import Control.Monad.IO.Class (liftIO)
-import Control.Arrow.ArrowList (listA, arr2A)
 import Data.CaseInsensitive as CI (mk)
+import Data.Either
+import Data.PEM (PEM(..), pemParseBS)
+import Data.Certificate.X509
+import Crypto.Types.PubKey.RSA
+import qualified Data.Certificate.KeyRSA as KeyRSA
+import Network.TLS
+
 
 data HostedService = HostedService {
     hostedServiceName :: String
@@ -74,74 +75,89 @@ vmSshEndpoint vm = listToMaybe
 
 data AWSSetup = AWSSetup
   {
-    subscriptionId :: String
-  , certificate :: X509
+    certificate :: X509
   , privateKey :: PrivateKey
-  , baseUrl :: String
   }
 
-encodePrivateKey :: PrivateKey -> ByteString
-encodePrivateKey (PrivRSA pkey) = runPut $ do
-  put (RSA.private_size pkey)
-  put (RSA.private_n pkey)
-  put (RSA.private_d pkey)
-  put (RSA.private_p pkey)
-  put (RSA.private_q pkey)
-  put (RSA.private_dP pkey)
-  put (RSA.private_dQ pkey)
-  put (RSA.private_qinv pkey)
+encodePrivateKey :: PrivateKey -> BL.ByteString
+encodePrivateKey (PrivateKey pub d p q dP dQ qinv) = runPut $ do
+  put (pub)
+  put (d)
+  put (p)
+  put (q)
+  put (dP)
+  put (dQ)
+  put (qinv)
 
-decodePrivateKey :: ByteString -> PrivateKey
-decodePrivateKey = PrivRSA . runGet getPrivateKey
-  where
-    getPrivateKey :: Get RSA.PrivateKey
-    getPrivateKey =
-      RSA.PrivateKey <$> get <*> get <*> get <*> get <*> get <*> get <*> get <*> get
+decodePrivateKey :: BL.ByteString -> PrivateKey
+decodePrivateKey = runGet getPrivateKey
+    where
+        getPrivateKey :: Get PrivateKey
+        getPrivateKey =
+            PrivateKey <$> get <*> get <*> get <*> get <*> get <*> get <*> get
+
+instance Binary PublicKey where
+    put (PublicKey psize n e) = do
+        put psize
+        put n
+        put e
+    get = do
+        psize <- get
+        n <- get
+        e <- get
+        return $ PublicKey psize n e
 
 instance Binary AWSSetup where
-  put (AWSSetup sid cert pkey url) = do
-    put sid
+  put (AWSSetup cert pkey) = do
     put (encodeCertificate cert)
     put (encodePrivateKey pkey)
-    put url
   get = do
-    sid  <- get
     Right cert <- decodeCertificate <$> get
     pkey <- decodePrivateKey <$> get
-    url  <- get
-    return $ AWSSetup sid cert pkey url
+    return $ AWSSetup cert pkey
 
-awsSetup :: String        
-         -> String       
-         -> String      
+awsSetup :: String
+         -> String
          -> IO AWSSetup
-awsSetup sid certPath pkeyPath = do
+awsSetup certPath pkeyPath = do
   cert <- fileReadCertificate certPath
   pkey <- fileReadPrivateKey pkeyPath
   return AWSSetup {
-      subscriptionId = sid
-    , certificate    = cert
+      certificate    = cert
     , privateKey     = pkey
-    , baseUrl        = "https://ec2.amazonaws.com/"
     }
 
+fileReadCertificate :: FilePath -> IO X509
+fileReadCertificate filepath = do
+    certs <- rights . parseCerts . pemParseBS <$> B.readFile filepath
+    case certs of
+        []    -> error "no valid certificate found"
+        (x:_) -> return x
+    where parseCerts (Right pems) = map (decodeCertificate . BL.fromChunks . (:[]) . pemContent)
+                                  $ filter (flip elem ["CERTIFICATE", "TRUSTED CERTIFICATE"] . pemName) pems
+          parseCerts (Left err) = error ("cannot parse PEM file " ++ show err)
 
+fileReadPrivateKey :: FilePath -> IO PrivateKey
+fileReadPrivateKey filepath = do
+    pk <- rights . parseKey . pemParseBS <$> B.readFile filepath
+    case pk of
+        []    -> error "no valid RSA key found"
+        (x:_) -> return x
+
+    where parseKey (Right pems) = map (fmap (snd) . KeyRSA.decodePrivate . BL.fromChunks . (:[]) . pemContent)
+                                $ filter ((== "RSA PRIVATE KEY") . pemName) pems
+          parseKey (Left err) = error ("Cannot parse PEM file " ++ show err)
+
+-- cloudServices :: IO [CloudService]
 {--
-cloudServices :: AWSSetup -> IO [CloudService]
-cloudServices setup = awsExecute setup $ \exec -> do
-  services <- exec hostedServicesRequest
-  forM services $ \service -> do
-    roles <- exec AWSRequest {
-        relativeUrl = "/services/hostedservices/" ++ hostedServiceName service
-                   ++ "?embed-detail=true"
-      , apiVersion  = "2012-03-01"
-      , parser      = proc xml -> do
-          role      <- getXPathTrees "//Role[@type='PersistentVMRole']" -< xml
-          name      <- getText . getXPathTrees "/Role/RoleName/text()" -< role
-          roleInst  <- arr2A getXPathTrees -< ("//RoleInstance[RoleName='" ++ name ++ "']", xml)
-          ip        <- getText . getXPathTrees "/RoleInstance/IpAddress/text()" -< roleInst
-          endpoints <- listA (parseEndpoint . getXPathTrees "//InputEndpoint") -< role
-          id -< VirtualMachine name ip endpoints
-      }
-    return $ CloudService (hostedServiceName service) roles
+createService :: String -> IO CloudService
+createService tag = do
+    return ()
+
+addVM :: CloudService -> IO ()
+addVM cserv = do
+    return ()
 --}
+-- shutdownVM :: CloudService -> IO ()
+
+-- createAWSVM :: String -> IO VirtualMachine
