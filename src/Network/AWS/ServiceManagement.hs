@@ -21,11 +21,6 @@ module Network.AWS.ServiceManagement
 
   ) where
 
-
-import Prelude hiding (id, (.))
-import Control.Category (id, (.))
-import Control.Arrow (arr)
-import Control.Monad (forM)
 import Data.Maybe (listToMaybe)
 import Control.Applicative ((<$>), (<*>))
 import qualified Data.ByteString as B
@@ -33,14 +28,12 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Binary (Binary(get, put))
 import Data.Binary.Put (runPut)
 import Data.Binary.Get (Get, runGet)
-import Data.CaseInsensitive as CI (mk)
 import Data.Either
 import Data.PEM (PEM(..), pemParseBS)
 import Data.Certificate.X509
 import Crypto.Types.PubKey.RSA
 import qualified Data.Certificate.KeyRSA as KeyRSA
 import Network.TLS
-
 
 data HostedService = HostedService {
     hostedServiceName :: String
@@ -51,7 +44,6 @@ data CloudService = CloudService {
   , cloudServiceVMs  :: [VirtualMachine]
   }
 
--- | Virtual machine
 data VirtualMachine = VirtualMachine {
     vmName           :: String
   , vmIpAddress      :: String
@@ -63,7 +55,6 @@ data Endpoint = Endpoint {
   , endpointPort :: String
   , endpointVip  :: String
   }
-
 
 -- | Find the endpoint with name @SSH@.
 vmSshEndpoint :: VirtualMachine -> Maybe Endpoint
