@@ -10,7 +10,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Network.AWS.ServiceManagement
-  build-depends:       base >=4.7 && <4.8,
+  build-depends:       base <4.8,
                        aws-sdk == 0.12.4,
                        case-insensitive,
                        tls,
