@@ -12,8 +12,6 @@ module Network.AWS.ServiceManagement
   , endpointPort
   , endpointVip
   , vmSshEndpoint
-  , AWSSetup(..)
-  , awsSetup
     -- * High-level API
   , cloudServices
 --  , createService
@@ -78,80 +76,6 @@ vmSshEndpoint vm = listToMaybe
   , endpointName ep == "SSH"
   ]
 
-data AWSSetup = AWSSetup
-  {
-    certificate :: X509
-  , privateKey :: PrivateKey
-  }
-
-encodePrivateKey :: PrivateKey -> BL.ByteString
-encodePrivateKey (PrivateKey pub d p q dP dQ qinv) = runPut $ do
-  put (pub)
-  put (d)
-  put (p)
-  put (q)
-  put (dP)
-  put (dQ)
-  put (qinv)
-
-decodePrivateKey :: BL.ByteString -> PrivateKey
-decodePrivateKey = runGet getPrivateKey
-    where
-        getPrivateKey :: Get PrivateKey
-        getPrivateKey =
-            PrivateKey <$> get <*> get <*> get <*> get <*> get <*> get <*> get
-
-instance Binary PublicKey where
-    put (PublicKey psize n e) = do
-        put psize
-        put n
-        put e
-    get = do
-        psize <- get
-        n <- get
-        e <- get
-        return $ PublicKey psize n e
-
-instance Binary AWSSetup where
-  put (AWSSetup cert pkey) = do
-    put (encodeCertificate cert)
-    put (encodePrivateKey pkey)
-  get = do
-    Right cert <- decodeCertificate <$> get
-    pkey <- decodePrivateKey <$> get
-    return $ AWSSetup cert pkey
-
-awsSetup :: String
-         -> String
-         -> IO AWSSetup
-awsSetup certPath pkeyPath = do
-  cert <- fileReadCertificate certPath
-  pkey <- fileReadPrivateKey pkeyPath
-  return AWSSetup {
-      certificate    = cert
-    , privateKey     = pkey
-    }
-
-fileReadCertificate :: FilePath -> IO X509
-fileReadCertificate filepath = do
-    certs <- rights . parseCerts . pemParseBS <$> B.readFile filepath
-    case certs of
-        []    -> error "no valid certificate found"
-        (x:_) -> return x
-    where parseCerts (Right pems) = map (decodeCertificate . BL.fromChunks . (:[]) . pemContent)
-                                  $ filter (flip elem ["CERTIFICATE", "TRUSTED CERTIFICATE"] . pemName) pems
-          parseCerts (Left err) = error ("cannot parse PEM file " ++ show err)
-
-fileReadPrivateKey :: FilePath -> IO PrivateKey
-fileReadPrivateKey filepath = do
-    pk <- rights . parseKey . pemParseBS <$> B.readFile filepath
-    case pk of
-        []    -> error "no valid RSA key found"
-        (x:_) -> return x
-
-    where parseKey (Right pems) = map (fmap (snd) . KeyRSA.decodePrivate . BL.fromChunks . (:[]) . pemContent)
-                                $ filter ((== "RSA PRIVATE KEY") . pemName) pems
-          parseKey (Left err) = error ("Cannot parse PEM file " ++ show err)
 
 cloudServices :: IO [CloudService]
 cloudServices = do
