@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
 module Network.AWS.ServiceManagement
   ( CloudService
   , cloudServiceName
@@ -46,6 +46,7 @@ data CloudService = CloudService {
 
 data VirtualMachine = VirtualMachine {
     vmName           :: String
+  , vmInstanceId     :: String
   , vmIpAddress      :: String
   , vmInputEndpoints :: [Endpoint]
   } deriving (Show)
@@ -64,12 +65,31 @@ vmSshEndpoint vm = listToMaybe
   , endpointName ep == "SSH"
   ]
 
-
 cloudServices :: IO [CloudService]
 cloudServices = do
     ins <- getInstances
-    let services = groupServices ins
+    let ins' = filter (\x -> instanceState x == InstanceStateRunning) ins
+    let services = groupServices ins'
     return $ parseServices services
+
+addVM :: String -> CloudService -> IO CloudService
+addVM name cserv = do
+    vm <- createVM name (cloudServiceName cserv)
+    cred <- loadCredential
+    runResourceT $ runEC2 cred $ do
+        setRegion "eu-west-1"
+        waitForInstanceState InstanceStateRunning (pack $ vmInstanceId vm)
+    return $ cserv {
+        cloudServiceVMs = cloudServiceVMs cserv ++ [vm]
+    }
+
+destroyVM :: String -> CloudService -> IO CloudService
+destroyVM name cs = do
+    let vm = head $ filter (\v -> vmName v == name) (cloudServiceVMs cs)
+    terminateVM vm
+    return $ cs {
+        cloudServiceVMs = filter (\v -> vmName v /= name) (cloudServiceVMs cs)
+    }
 
 getInstances :: IO [Instance]
 getInstances = do
@@ -79,8 +99,41 @@ getInstances = do
         Util.list $ describeInstances [] []
     return $ concatMap reservationInstanceSet reservations
 
+createVM :: String -> String -> IO VirtualMachine
+createVM name service = do
+    cred <- loadCredential
+    reservations <- runResourceT $ runEC2 cred $ do
+        setRegion "eu-west-1"
+        let request = defaultRunInstancesRequest "ami-c7a73db0" 1 1
+        -- request defaults to t1.micro which doesn't support hvm virtualisation
+        let request' = request {
+            runInstancesRequestInstanceType = Just "t2.micro"
+        }
+        runInstances request'
+    let ins = head $ reservationInstanceSet reservations
+    success <- runResourceT $ runEC2 cred $ do
+        setRegion "eu-west-1"
+        createTags [instanceId ins] [("Name", pack name)
+                                    ,("service", pack service)]
+    reservations' <- runResourceT $ runEC2 cred $ do
+        setRegion "eu-west-1"
+        Util.list $ describeInstances [instanceId ins] []
+    let ins' = head $ concatMap reservationInstanceSet reservations'
+    return $ parseInstance ins'
+
+terminateVM :: VirtualMachine -> IO ()
+terminateVM vm = do
+    cred <- loadCredential
+    let id = [pack $ vmInstanceId vm]
+    runResourceT $ runEC2 cred $ do
+        setRegion "eu-west-1"
+        Util.list $ terminateInstances id
+    return ()
+
 getTagValue :: String -> Instance -> String
-getTagValue key ins = head [unpack . fromJust $ resourceTagValue resTag | resTag <- instanceTagSet ins, unpack (resourceTagKey resTag) == key]
+getTagValue key ins = head [unpack . fromJust $ resourceTagValue resTag
+                           | resTag <- instanceTagSet ins
+                           , unpack (resourceTagKey resTag) == key]
 
 groupServices :: [Instance] -> Map String [VirtualMachine]
 groupServices instances = fromListWith (++) serviceTuplesWithLists
@@ -92,6 +145,7 @@ groupServices instances = fromListWith (++) serviceTuplesWithLists
 parseInstance :: Instance -> VirtualMachine
 parseInstance ins = VirtualMachine {
     vmName = getTagValue "Name" ins
+  , vmInstanceId = unpack $ instanceId ins
   , vmIpAddress = unpack $ fromJust $ instanceDnsName ins
   , vmInputEndpoints = [Endpoint {
         endpointName = "SSH"
@@ -107,17 +161,10 @@ parseServices = map parseTuple . toList
           , cloudServiceVMs = vms
  }
 
-{--
-createService :: String -> IO CloudService
-createService tag = do
-    return ()
-
-addVM :: CloudService -> IO ()
-addVM cserv = do
-    return ()
---}
--- shutdownVM :: CloudService -> IO ()
-
--- createAWSVM :: String -> IO VirtualMachine
--- createAWSVM name = do
-
+-- AWS.EC2Tests.Util
+waitForInstanceState :: (MonadBaseControl IO m, MonadResource m) =>
+                     InstanceState -> Text -> EC2 m Reservation
+waitForInstanceState s = Util.wait p desc
+  where
+    p r = (instanceState . head . reservationInstanceSet) r == s
+    desc inst = Util.list $ describeInstances [inst] []
