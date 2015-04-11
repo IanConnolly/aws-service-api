@@ -21,30 +21,18 @@ module Network.AWS.ServiceManagement
   ) where
 
 import Data.Maybe
-import Control.Applicative ((<$>), (<*>))
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
-import Data.Binary (Binary(get, put))
-import Data.Binary.Put (runPut)
-import Data.Binary.Get (Get, runGet)
 import Data.Either
-import Data.PEM (PEM(..), pemParseBS)
-import Data.Certificate.X509
-import Crypto.Types.PubKey.RSA
-import qualified Data.Certificate.KeyRSA as KeyRSA
-import Network.TLS
 
 import Data.Conduit
 import Control.Monad.Trans.Resource
 import qualified Data.Conduit.List as CL
-import Control.Monad.Trans.Class (lift)
 
 import AWS
 import AWS.EC2
 import AWS.EC2.Types
 import qualified AWS.EC2.Util as Util
 
-import Data.Text hiding (map, filter, concat, head)
+import Data.Text hiding (map, filter, concat, head, concatMap)
 import Data.Map (Map(..), fromListWith, toList)
 
 data HostedService = HostedService {
@@ -89,10 +77,10 @@ getInstances = do
     reservations <- runResourceT $ runEC2 cred $ do
         setRegion "eu-west-1"
         Util.list $ describeInstances [] []
-    return $ concat $ map reservationInstanceSet reservations
+    return $ concatMap reservationInstanceSet reservations
 
 getTagValue :: String -> Instance -> String
-getTagValue key ins = head $ [unpack . fromJust $ resourceTagValue resTag | resTag <- instanceTagSet ins, unpack (resourceTagKey resTag) == key]
+getTagValue key ins = head [unpack . fromJust $ resourceTagValue resTag | resTag <- instanceTagSet ins, unpack (resourceTagKey resTag) == key]
 
 groupServices :: [Instance] -> Map String [VirtualMachine]
 groupServices instances = fromListWith (++) serviceTuplesWithLists
