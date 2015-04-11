@@ -180,10 +180,10 @@ groupServices instances = fromListWith (++) serviceTuplesWithLists
 parseInstance :: Instance -> VirtualMachine
 parseInstance ins = VirtualMachine {
     vmName = getTagValue "Name" ins
-  , vmIpAddress = show $ fromJust $ instanceIpAddress ins
+  , vmIpAddress = unpack $ fromJust $ instanceDnsName ins
   , vmInputEndpoints = [Endpoint {
         endpointName = "SSH"
-      , endpointVip = show $ fromJust $ instanceIpAddress ins
+      , endpointVip = unpack $ fromJust $ instanceDnsName ins
       , endpointPort = "22"
   }]
  }
