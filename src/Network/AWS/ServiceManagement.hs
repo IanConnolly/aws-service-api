@@ -18,6 +18,9 @@ module Network.AWS.ServiceManagement
   , cloudServices
   , addVM
   , destroyVM
+  , createService
+  , scaleUpService
+  , scaleDownService
   ) where
 
 import Data.Maybe
@@ -32,8 +35,11 @@ import AWS.EC2
 import AWS.EC2.Types
 import qualified AWS.EC2.Util as Util
 
-import Data.Text hiding (map, filter, concat, head, concatMap)
+import Data.Text hiding (map, filter, concat, head, concatMap, length)
 import Data.Map (Map(..), fromListWith, toList)
+
+import System.Random
+import Data.UUID
 
 import Network.AWS.Config as Conf
 
@@ -90,6 +96,47 @@ destroyVM conf name cs = do
         cloudServiceVMs = filter (\v -> vmName v /= name) (cloudServiceVMs cs)
     }
 
+scaleUpService :: AWSConfig -> CloudService -> Int -> IO CloudService
+scaleUpService conf cserv 0 = return cserv
+scaleUpService conf cserv n = do
+    name <- newInstanceName $ cloudServiceName cserv
+    cserv' <- addVM conf name cserv
+    scaleUpService conf cserv' (n - 1)
+
+scaleDownService :: AWSConfig -> CloudService -> Int -> IO CloudService
+scaleDownService conf cserv 0 = return cserv
+scaleDownService conf cserv n = do
+    vm <- randomVM cserv
+    cserv' <- destroyVM conf (vmName vm) cserv
+    scaleDownService conf cserv' (n - 1)
+
+createService :: AWSConfig -> String -> Int -> IO CloudService
+createService conf service num = do
+    name <- newInstanceName service
+    vm <- createVM conf name service
+    let cred = newCredential (accessKey conf) (secretAccessKey conf)
+    runResourceT $ runEC2 cred $ do
+        setRegion $ pack $ region conf
+        waitForInstanceState InstanceStateRunning (pack $ vmInstanceId vm)
+    let cserv = CloudService {
+        cloudServiceName = service
+      , cloudServiceVMs = [vm]
+    }
+    scaleUpService conf cserv (num - 1)
+
+randomVM :: CloudService -> IO VirtualMachine
+randomVM cserv = do
+    g <- newStdGen
+    let vms = cloudServiceVMs cserv
+    let (index, _) = randomR (0, length vms - 1) g
+    return $ vms !! index
+
+newInstanceName :: String -> IO String
+newInstanceName cserv = do
+    g <- newStdGen
+    let (uuid, _) = random g
+    return $ cserv ++ "-" ++ toString uuid
+
 getInstances :: AWSConfig -> IO [Instance]
 getInstances conf = do
     let cred = newCredential (accessKey conf) (secretAccessKey conf)
@@ -104,7 +151,6 @@ createVM conf name service = do
     reservations <- runResourceT $ runEC2 cred $ do
         setRegion $ pack $ region conf
         let request = defaultRunInstancesRequest (pack $ image conf) 1 1
-        -- request defaults to t1.micro which doesn't support hvm virtualisation
         let request' = request {
             runInstancesRequestInstanceType =
                 Just . pack . Conf.instanceType $ conf
@@ -168,3 +214,4 @@ waitForInstanceState s = Util.wait p desc
   where
     p r = (instanceState . head . reservationInstanceSet) r == s
     desc inst = Util.list $ describeInstances [inst] []
+
