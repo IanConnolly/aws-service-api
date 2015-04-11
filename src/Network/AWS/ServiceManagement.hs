@@ -12,7 +12,6 @@ module Network.AWS.ServiceManagement
   , endpointPort
   , endpointVip
   , vmSshEndpoint
-  , AWSConfig(..)
   , awsConfig
     -- * High-level API
   , cloudServices
