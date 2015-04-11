@@ -12,8 +12,6 @@ module Network.AWS.ServiceManagement
   , endpointPort
   , endpointVip
   , vmSshEndpoint
-  , AWSSetup(..)
-  , awsSetup
     -- * High-level API
   , cloudServices
 --  , createService
@@ -69,23 +67,6 @@ data Endpoint = Endpoint {
   , endpointPort :: String
   , endpointVip  :: String
   } deriving (Show)
-
-data AWSSetup = AWSSetup {
-    awsConf :: B.ByteString
-}
-
-instance Binary AWSSetup where
-    put (AWSSetup awsconf) = put awsconf
-    get = do
-       conf <- get
-       return $ AWSSetup conf
-
-awsSetup :: FilePath -> IO AWSSetup
-awsSetup awsConfPath = do
-    contents <- B.readFile awsConfPath
-    return AWSSetup {
-        awsConf = contents
-    }
 
 -- | Find the endpoint with name @SSH@.
 vmSshEndpoint :: VirtualMachine -> Maybe Endpoint
