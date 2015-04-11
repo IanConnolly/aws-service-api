@@ -16,6 +16,9 @@ library
                        conduit,
                        resourcet,
                        text,
+                       parsec,
+                       bytestring,
+                       simple-config >= 1.1.1.0,
                        containers
 
   hs-source-dirs:      src

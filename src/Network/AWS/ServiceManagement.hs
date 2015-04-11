@@ -12,11 +12,12 @@ module Network.AWS.ServiceManagement
   , endpointPort
   , endpointVip
   , vmSshEndpoint
+  , AWSConfig(..)
+  , awsConfig
     -- * High-level API
   , cloudServices
   , addVM
   , destroyVM
-
   ) where
 
 import Data.Maybe
@@ -33,6 +34,8 @@ import qualified AWS.EC2.Util as Util
 
 import Data.Text hiding (map, filter, concat, head, concatMap)
 import Data.Map (Map(..), fromListWith, toList)
+
+import Network.AWS.Config as Conf
 
 data CloudService = CloudService {
     cloudServiceName :: String
@@ -59,68 +62,71 @@ vmSshEndpoint vm = listToMaybe
   , endpointName ep == "SSH"
   ]
 
-cloudServices :: IO [CloudService]
-cloudServices = do
-    ins <- getInstances
+awsConfig = loadConfigFromFile
+
+cloudServices :: AWSConfig -> IO [CloudService]
+cloudServices conf = do
+    ins <- getInstances conf
     let ins' = filter (\x -> instanceState x == InstanceStateRunning) ins
     let services = groupServices ins'
     return $ parseServices services
 
-addVM :: String -> CloudService -> IO CloudService
-addVM name cserv = do
-    vm <- createVM name (cloudServiceName cserv)
-    cred <- loadCredential
+addVM :: AWSConfig -> String -> CloudService -> IO CloudService
+addVM conf name cserv = do
+    vm <- createVM conf name (cloudServiceName cserv)
+    let cred = newCredential (accessKey conf) (secretAccessKey conf)
     runResourceT $ runEC2 cred $ do
-        setRegion "eu-west-1"
+        setRegion $ pack $ region conf
         waitForInstanceState InstanceStateRunning (pack $ vmInstanceId vm)
     return $ cserv {
         cloudServiceVMs = cloudServiceVMs cserv ++ [vm]
     }
 
-destroyVM :: String -> CloudService -> IO CloudService
-destroyVM name cs = do
+destroyVM :: AWSConfig -> String -> CloudService -> IO CloudService
+destroyVM conf name cs = do
     let vm = head $ filter (\v -> vmName v == name) (cloudServiceVMs cs)
-    terminateVM vm
+    terminateVM conf vm
     return $ cs {
         cloudServiceVMs = filter (\v -> vmName v /= name) (cloudServiceVMs cs)
     }
 
-getInstances :: IO [Instance]
-getInstances = do
-    cred <- loadCredential
+getInstances :: AWSConfig -> IO [Instance]
+getInstances conf = do
+    let cred = newCredential (accessKey conf) (secretAccessKey conf)
     reservations <- runResourceT $ runEC2 cred $ do
-        setRegion "eu-west-1"
+        setRegion $ pack $ region conf
         Util.list $ describeInstances [] []
     return $ concatMap reservationInstanceSet reservations
 
-createVM :: String -> String -> IO VirtualMachine
-createVM name service = do
-    cred <- loadCredential
+createVM :: AWSConfig -> String -> String -> IO VirtualMachine
+createVM conf name service = do
+    let cred = newCredential (accessKey conf) (secretAccessKey conf)
     reservations <- runResourceT $ runEC2 cred $ do
-        setRegion "eu-west-1"
-        let request = defaultRunInstancesRequest "ami-c7a73db0" 1 1
+        setRegion $ pack $ region conf
+        let request = defaultRunInstancesRequest (pack $ image conf) 1 1
         -- request defaults to t1.micro which doesn't support hvm virtualisation
         let request' = request {
-            runInstancesRequestInstanceType = Just "t2.micro"
+            runInstancesRequestInstanceType =
+                Just . pack . Conf.instanceType $ conf
         }
         runInstances request'
     let ins = head $ reservationInstanceSet reservations
     success <- runResourceT $ runEC2 cred $ do
-        setRegion "eu-west-1"
+        setRegion $ pack $ region conf
         createTags [instanceId ins] [("Name", pack name)
                                     ,("service", pack service)]
     reservations' <- runResourceT $ runEC2 cred $ do
-        setRegion "eu-west-1"
+        setRegion $ pack $ region conf
         Util.list $ describeInstances [instanceId ins] []
     let ins' = head $ concatMap reservationInstanceSet reservations'
     return $ parseInstance ins'
 
-terminateVM :: VirtualMachine -> IO ()
-terminateVM vm = do
-    cred <- loadCredential
+terminateVM :: AWSConfig -> VirtualMachine -> IO ()
+terminateVM conf vm = do
+    let cred = newCredential (accessKey conf) (secretAccessKey conf)
     let id = [pack $ vmInstanceId vm]
     runResourceT $ runEC2 cred $ do
-        setRegion "eu-west-1"
+        setRegion $ pack $ region conf
         Util.list $ terminateInstances id
     return ()
 
