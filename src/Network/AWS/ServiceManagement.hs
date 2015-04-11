@@ -14,9 +14,8 @@ module Network.AWS.ServiceManagement
   , vmSshEndpoint
     -- * High-level API
   , cloudServices
---  , createService
---  , addVM
---  , shutdownVM
+  , addVM
+  , destroyVM
 
   ) where
 
@@ -34,10 +33,6 @@ import qualified AWS.EC2.Util as Util
 
 import Data.Text hiding (map, filter, concat, head, concatMap)
 import Data.Map (Map(..), fromListWith, toList)
-
-data HostedService = HostedService {
-    hostedServiceName :: String
-  }
 
 data CloudService = CloudService {
     cloudServiceName :: String
@@ -57,7 +52,6 @@ data Endpoint = Endpoint {
   , endpointVip  :: String
   } deriving (Show)
 
--- | Find the endpoint with name @SSH@.
 vmSshEndpoint :: VirtualMachine -> Maybe Endpoint
 vmSshEndpoint vm = listToMaybe
   [ ep
