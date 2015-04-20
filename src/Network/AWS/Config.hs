@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell, QuasiQuotes, ScopedTypeVariables #-}
 module Network.AWS.Config
-    ( AWSConfig(..)
-    , loadConfigFromFile
+    ( AWSSetup(..)
+    , loadSetupFromFile
     ) where
 
 import Data.ByteString (ByteString)
@@ -10,7 +10,7 @@ import Text.Config
 import Text.Parsec (parse)
 
 mkConfig "configParser" [config|
-AWSConfig
+AWSSetup
     accessKey       ByteString
     secretAccessKey ByteString
     region          String
@@ -18,8 +18,8 @@ AWSConfig
     instanceType    String
 |]
 
-loadConfigFromFile :: FilePath -> IO AWSConfig
-loadConfigFromFile path = do
+loadSetupFromFile :: FilePath -> IO AWSSetup
+loadSetupFromFile path = do
     str <- BS.readFile path
     case parse configParser "" str of
         Left err   -> fail $ show err

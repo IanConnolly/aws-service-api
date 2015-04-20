@@ -12,7 +12,8 @@ module Network.AWS.ServiceManagement
   , endpointPort
   , endpointVip
   , vmSshEndpoint
-  , awsConfig
+  , awsSetup
+  , AWSSetup
     -- * High-level API
   , cloudServices
   , addVM
@@ -67,16 +68,16 @@ vmSshEndpoint vm = listToMaybe
   , endpointName ep == "SSH"
   ]
 
-awsConfig = loadConfigFromFile
+awsSetup = loadSetupFromFile
 
-cloudServices :: AWSConfig -> IO [CloudService]
+cloudServices :: AWSSetup -> IO [CloudService]
 cloudServices conf = do
     ins <- getInstances conf
     let ins' = filter (\x -> instanceState x == InstanceStateRunning) ins
     let services = groupServices ins'
     return $ parseServices services
 
-addVM :: AWSConfig -> String -> CloudService -> IO CloudService
+addVM :: AWSSetup -> String -> CloudService -> IO CloudService
 addVM conf name cserv = do
     vm <- createVM conf name (cloudServiceName cserv)
     let cred = newCredential (accessKey conf) (secretAccessKey conf)
@@ -87,7 +88,7 @@ addVM conf name cserv = do
         cloudServiceVMs = cloudServiceVMs cserv ++ [vm]
     }
 
-destroyVM :: AWSConfig -> String -> CloudService -> IO CloudService
+destroyVM :: AWSSetup -> String -> CloudService -> IO CloudService
 destroyVM conf name cs = do
     let vm = head $ filter (\v -> vmName v == name) (cloudServiceVMs cs)
     terminateVM conf vm
@@ -95,21 +96,21 @@ destroyVM conf name cs = do
         cloudServiceVMs = filter (\v -> vmName v /= name) (cloudServiceVMs cs)
     }
 
-scaleUpService :: AWSConfig -> CloudService -> Int -> IO CloudService
+scaleUpService :: AWSSetup -> CloudService -> Int -> IO CloudService
 scaleUpService conf cserv 0 = return cserv
 scaleUpService conf cserv n = do
     name <- newInstanceName $ cloudServiceName cserv
     cserv' <- addVM conf name cserv
     scaleUpService conf cserv' (n - 1)
 
-scaleDownService :: AWSConfig -> CloudService -> Int -> IO CloudService
+scaleDownService :: AWSSetup -> CloudService -> Int -> IO CloudService
 scaleDownService conf cserv 0 = return cserv
 scaleDownService conf cserv n = do
     vm <- randomVM cserv
     cserv' <- destroyVM conf (vmName vm) cserv
     scaleDownService conf cserv' (n - 1)
 
-createService :: AWSConfig -> String -> Int -> IO CloudService
+createService :: AWSSetup -> String -> Int -> IO CloudService
 createService conf service num = do
     name <- newInstanceName service
     vm <- createVM conf name service
@@ -136,7 +137,7 @@ newInstanceName cserv = do
     let (uuid, _) = random g
     return $ cserv ++ "-" ++ toString uuid
 
-getInstances :: AWSConfig -> IO [Instance]
+getInstances :: AWSSetup -> IO [Instance]
 getInstances conf = do
     let cred = newCredential (accessKey conf) (secretAccessKey conf)
     reservations <- runResourceT $ runEC2 cred $ do
@@ -144,7 +145,7 @@ getInstances conf = do
         Util.list $ describeInstances [] []
     return $ concatMap reservationInstanceSet reservations
 
-createVM :: AWSConfig -> String -> String -> IO VirtualMachine
+createVM :: AWSSetup -> String -> String -> IO VirtualMachine
 createVM conf name service = do
     let cred = newCredential (accessKey conf) (secretAccessKey conf)
     reservations <- runResourceT $ runEC2 cred $ do
@@ -166,7 +167,7 @@ createVM conf name service = do
     let ins' = head $ concatMap reservationInstanceSet reservations'
     return $ parseInstance ins'
 
-terminateVM :: AWSConfig -> VirtualMachine -> IO ()
+terminateVM :: AWSSetup -> VirtualMachine -> IO ()
 terminateVM conf vm = do
     let cred = newCredential (accessKey conf) (secretAccessKey conf)
     let id = [pack $ vmInstanceId vm]
